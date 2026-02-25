@@ -3,20 +3,22 @@ import os
 from datetime import datetime, timedelta
 
 def fetch_latest_ai_repos():
-    # 获取环境变量中的 Token（GitHub Actions 会自动传入）
+    # 获取环境变量中的 Token
     github_token = os.getenv("MY_GITHUB_TOKEN")
     
-    # 获取过去24小时内的日期
-    yesterday = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
+    # 【修改点1】将时间改为 30 天前
+    last_month_date = (datetime.utcnow() - timedelta(days=30)).strftime('%Y-%m-%d')
     
     url = "https://api.github.com/search/repositories"
-    query = f'(topic:ai OR topic:llm OR topic:machine-learning OR topic:deep-learning OR topic:gpt) created:>={yesterday}'
+    
+    # 搜索条件：标签包含AI相关，且创建时间在近1个月内
+    query = f'(topic:ai OR topic:llm OR topic:machine-learning OR topic:deep-learning OR topic:gpt) created:>={last_month_date}'
     
     params = {
         'q': query,
-        'sort': 'stars',
+        'sort': 'stars',   # 依然按星标（Star）数量降序排列，找出这一个月内最火的项目
         'order': 'desc',
-        'per_page': 10
+        'per_page': 20     # 【修改点2】将获取数量提升到前 20 名（最大可以改成100）
     }
     
     headers = {
@@ -26,7 +28,7 @@ def fetch_latest_ai_repos():
     if github_token:
         headers['Authorization'] = f'token {github_token}'
         
-    print(f"🔍 正在搜索 {yesterday} 之后创建的最新 AI 项目...\n")
+    print(f"🔍 正在搜索 {last_month_date} 之后（近1个月内）创建的最高星 AI 项目...\n")
     response = requests.get(url, headers=headers, params=params)
     
     if response.status_code == 200:
@@ -34,10 +36,10 @@ def fetch_latest_ai_repos():
         repos = data.get('items',[])
         
         if not repos:
-            print("今天暂时没有热门的新 AI 项目产生。")
+            print("这段时间内暂时没有符合条件的新 AI 项目。")
             return
 
-        print(f"📊 成功收集到 {len(repos)} 个最新 AI 项目：\n")
+        print(f"📊 成功收集到 {len(repos)} 个近1个月内最火的 AI 项目：\n")
         print("-" * 40)
         
         for i, repo in enumerate(repos, 1):
