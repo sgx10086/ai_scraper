@@ -2,23 +2,23 @@ import requests
 import os
 from datetime import datetime, timedelta
 
-def fetch_latest_ai_repos():
+def fetch_latest_trending_repos():
     # 获取环境变量中的 Token
     github_token = os.getenv("MY_GITHUB_TOKEN")
     
-    # 【核心修改点1】将时间改为 365 天前（近1年）
-    last_year_date = (datetime.utcnow() - timedelta(days=365)).strftime('%Y-%m-%d')
+    # 【修改点1】将时间改为 7 天前（近1周）
+    last_week_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
     
     url = "https://api.github.com/search/repositories"
     
-    # 搜索条件：标签包含AI相关，且创建时间在近1年内
-    query = f'(topic:ai OR topic:llm OR topic:machine-learning OR topic:deep-learning OR topic:gpt) created:>={last_year_date}'
+    # 【修改点2】去掉了 topic 限制，只搜索近1周内创建的所有项目
+    query = f'created:>={last_week_date}'
     
     params = {
         'q': query,
-        'sort': 'stars',   # 按星标（Star）数量降序排列，找出这一年内最火的新项目
+        'sort': 'stars',   # 按星标（Star）数量降序排列，寻找这周最受关注的项目
         'order': 'desc',
-        'per_page': 30     # 【核心修改点2】获取排名前 30 的项目（可修改，最大100）
+        'per_page': 20     # 获取排名前 20 的项目（你可以自己改成 30 或 50）
     }
     
     headers = {
@@ -28,38 +28,9 @@ def fetch_latest_ai_repos():
     if github_token:
         headers['Authorization'] = f'token {github_token}'
         
-    print(f"🔍 正在搜索 {last_year_date} 之后（近1年内）创建的最高星 AI 项目...\n")
+    print(f"🔍 正在搜索 {last_week_date} 之后（近1周内）诞生的全球最高星开源项目...\n")
     response = requests.get(url, headers=headers, params=params)
     
     if response.status_code == 200:
         data = response.json()
-        repos = data.get('items',[])
-        
-        if not repos:
-            print("这段时间内暂时没有符合条件的新 AI 项目。")
-            return
-
-        print(f"📊 成功收集到 {len(repos)} 个近1年内最火的 AI 项目：\n")
-        print("-" * 40)
-        
-        for i, repo in enumerate(repos, 1):
-            name = repo.get('full_name')
-            desc = repo.get('description') or "无描述"
-            url = repo.get('html_url')
-            stars = repo.get('stargazers_count')
-            language = repo.get('language') or "未知"
-            topics = repo.get('topics',[])
-            
-            print(f"【{i}】{name} (⭐ {stars} stars)")
-            print(f"  📝 描述: {desc}")
-            print(f"  💻 语言: {language}")
-            print(f"  🏷️ 标签: {', '.join(topics[:5])}")
-            print(f"  🔗 链接: {url}")
-            print("-" * 40)
-            
-    else:
-        print(f"请求失败，状态码: {response.status_code}")
-        print(response.json())
-
-if __name__ == "__main__":
-    fetch_latest_ai_repos()
+        repos = data.get('items',
