@@ -1,125 +1,146 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-GitHub 近7天“刚诞生就爆火”项目自动抓取器（完整修复版）
-功能：
-- 自动计算过去7天
-- 支持所有语言（默认）或指定语言（如Python）
-- 安全处理 description=None、language=None
-- 处理API速率限制提示
-- 输出美观中文结果
-
-使用方法：
-1. 保存为 ai_scraper.py
-2. pip install requests
-3. python ai_scraper.py
-4. 想只看Python项目：把下面 lang=None 改成 lang="Python"
-5. 想看更多：把 min_stars 调低到 100~200
-
-推荐每天跑一次，可放入 GitHub Actions 定时任务
+GitHub 近7天爆火新项目抓取器 → 生成静态 HTML 网页版
+输出：index.html（可直接托管到 GitHub Pages）
+每个项目包含：名称、主要内容（description）、stars/forks、语言、创建日期、链接
 """
-
 import requests
 from datetime import datetime, timedelta
-
+import os
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 def get_hot_new_repos(days=7, min_stars=300, lang=None, top_n=15):
-    # 动态计算7天前日期（UTC）
     today = datetime.utcnow().date()
     since_date = (today - timedelta(days=days)).strftime("%Y-%m-%d")
 
-    # 构建搜索条件
     query = f"created:>={since_date} stars:>={min_stars}"
     if lang:
         query += f" language:{lang}"
 
     url = "https://api.github.com/search/repositories"
-    headers = {
-        "Accept": "application/vnd.github+json",
-        # 如有GitHub Token（强烈推荐，限额更高）：
-        # "Authorization": "Bearer ghp_xxxxxxxxxxxxxxxxxxxxxxxx"
-    }
+    headers = {"Accept": "application/vnd.github+json"}
+    # headers["Authorization"] = "Bearer ghp_你的token"  # 推荐加 token 防限速
 
-    params = {
-        "q": query,
-        "sort": "stars",
-        "order": "desc",
-        "per_page": 100,
-        "page": 1
-    }
+    params = {"q": query, "sort": "stars", "order": "desc", "per_page": 100, "page": 1}
 
-    print(f"🔍 搜索条件: {query}")
-    print(f"🎯 正在获取前 {top_n} 个「近7天新建 + 较高star」的项目...\n")
-
+    print(f"🔍 搜索: {query}")
     repos = []
     page = 1
-    max_pages = 10  # 防止无限循环
-
-    while len(repos) < top_n and page <= max_pages:
+    while len(repos) < top_n and page <= 10:
         params["page"] = page
-        response = requests.get(url, headers=headers, params=params)
-
-        if response.status_code == 403:
-            print("❌ GitHub API 速率限制！请等待 1 小时后再试，或添加 GitHub Token")
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            items = data.get("items", [])
+            if not items:
+                break
+            for repo in items:
+                repos.append({
+                    "full_name": repo["full_name"],
+                    "stars": repo["stargazers_count"],
+                    "forks": repo["forks_count"],
+                    "created_at": repo["created_at"][:10],
+                    "language": repo.get("language") or "未知",
+                    "description": repo.get("description") or "暂无描述",
+                    "url": repo["html_url"]
+                })
+            if len(items) < 100:
+                break
+            page += 1
+        except Exception as e:
+            print(f"请求失败: {e}")
             break
-        if response.status_code != 200:
-            print(f"❌ 请求失败 (状态码 {response.status_code})")
-            print(response.text)
-            break
 
-        data = response.json()
-        items = data.get("items", [])
-
-        if not items:
-            break
-
-        for repo in items:
-            repos.append({
-                "full_name": repo["full_name"],
-                "stars": repo["stargazers_count"],
-                "forks": repo["forks_count"],
-                "created_at": repo["created_at"],
-                "language": repo.get("language") or "未知",
-                "description": repo.get("description") or "暂无描述",
-                "url": repo["html_url"]
-            })
-
-        if len(items) < 100:  # 最后一页
-            break
-        page += 1
-
-    # 按 star 降序（API 已排序，保险起见再排一次）
     repos.sort(key=lambda x: x["stars"], reverse=True)
-
     return repos[:top_n]
 
+# ================== Jinja2 模板字符串（简单美观） ==================
+TEMPLATE = """
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub 近 {{ days }} 天爆火新项目（{{ today }}）</title>
+    <style>
+        body { font-family: system-ui, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 20px; background: #f8f9fa; color: #333; }
+        h1 { color: #0366d6; text-align: center; }
+        .intro { text-align: center; color: #586069; }
+        ol { padding-left: 20px; }
+        li { margin: 20px 0; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        a { color: #0366d6; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .meta { color: #586069; font-size: 0.95em; margin: 8px 0; }
+        .desc { margin: 12px 0; }
+        footer { text-align: center; margin-top: 40px; color: #888; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <h1>GitHub 近 {{ days }} 天新建且高 Star 项目</h1>
+    <p class="intro">前 {{ repos|length }} 名（stars ≥ {{ min_stars }} {% if lang %} | 语言：{{ lang }}{% endif %}）<br>
+    数据时间：{{ update_time }} UTC | 自动更新</p>
+
+    <ol>
+    {% for r in repos %}
+        <li>
+            <strong><a href="{{ r.url }}" target="_blank">{{ r.full_name }}</a></strong>
+            <div class="meta">
+                ★ {{ r.stars | int | default(0) | string | replace(',', ',') }} &nbsp; forks: {{ r.forks }}
+                &nbsp; • &nbsp; {{ r.language }} &nbsp; • &nbsp; 创建于 {{ r.created_at }}
+            </div>
+            <div class="desc"><strong>主要内容：</strong> {{ r.description | safe }}</div>
+            <a href="{{ r.url }}" target="_blank">→ 查看项目</a>
+        </li>
+    {% endfor %}
+    </ol>
+
+    <footer>
+        由 Python 脚本自动生成 · <a href="https://github.com/你的用户名/你的仓库名">源代码</a> · 每天更新 · 发现下一个爆款！
+    </footer>
+</body>
+</html>
+"""
+
+def generate_html(repos, days, min_stars, lang=None):
+    today = datetime.now().strftime("%Y-%m-%d")
+    update_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+
+    env = Environment(
+        loader=FileSystemLoader("."),
+        autoescape=select_autoescape(['html', 'xml'])
+    )
+    # 因为用字符串模板，直接用 from_string
+    template = env.from_string(TEMPLATE)
+
+    html_content = template.render(
+        days=days,
+        today=today,
+        repos=repos,
+        min_stars=min_stars,
+        lang=lang,
+        update_time=update_time
+    )
+
+    output_file = "index.html"
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(html_content)
+    print(f"✅ 已生成网页: {os.path.abspath(output_file)}")
+    print(f"   打开浏览器查看: file://{os.path.abspath(output_file)}")
 
 if __name__ == "__main__":
-    # ================== 在这里修改配置 ==================
-    hot_repos = get_hot_new_repos(
-        days=7,          # 近7天
-        min_stars=300,   # “爆火”门槛（建议 300~500，可改成100看更多候选）
-        lang=None,       # None=全GitHub；"Python"=只看Python；"Rust"=只看Rust等
-        top_n=15         # 显示前多少个
-    )
-    # ====================================================
+    # ================== 配置 ==================
+    DAYS = 7
+    MIN_STARS = 300
+    LANGUAGE = None       # "Python", "Rust" 等
+    TOP_N = 15
+    # ==========================================
+
+    hot_repos = get_hot_new_repos(days=DAYS, min_stars=MIN_STARS, lang=LANGUAGE, top_n=TOP_N)
 
     if not hot_repos:
-        print("❌ 未找到符合条件的项目")
-        print("💡 建议：把 min_stars 改小一点（例如100），或者把 days 改成 10")
+        print("❌ 未找到项目，建议降低 min_stars")
     else:
-        print(f"✅ 成功找到 {len(hot_repos)} 个近7天新建且较火的项目（截至 {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC）\n")
-        
-        for i, r in enumerate(hot_repos, 1):
-            print(f"{i:2d}. {r['full_name']}")
-            print(f"   ★ {r['stars']:,}   forks: {r['forks']:,}")
-            print(f"   {r['language']} | 创建于: {r['created_at'][:10]}")
-            
-            # 安全截取描述
-            desc = r['description']
-            truncated = desc[:120] + ("..." if len(desc) > 120 else "")
-            print(f"   {truncated}")
-            
-            print(f"   🔗 {r['url']}\n")
-        
-        print("🚀 祝你早日发现下一个现象级项目！")
+        generate_html(hot_repos, DAYS, MIN_STARS, LANGUAGE)
+        print(f"找到 {len(hot_repos)} 个项目，已生成 index.html")
